@@ -1,0 +1,391 @@
+<h1 id="introduction">Introduction</h1>
+<p>“Where am I?” Accurately determining one’s location is critical for
+navigation and safety. Current systems usually rely on GPS to locate
+one’s position. However, GPS may struggle in environments with poor
+signal reception, such as rural areas or forests. Therefore, we propose
+an offline method to estimate the user’s location based on a photo they
+took. First, we collect a large dataset that contains paired information
+on the geographical coordinates (latitude and longitude) and
+corresponding images. Then, we compare the user-provided target image
+with the images in the database and output the most likely location
+where the target image was captured. Conceptually, this works like the
+inverse of Google Street View: instead of determining what a location
+looks like based on coordinates, it deduces the current location based
+on the input photo.</p>
+<p>For instance, a user could take a photo as a target photo anywhere in
+downtown Berkeley, and the system would output the precise 2-D
+geographical coordinates (latitude and longitude) of their location.
+Specifically, we used a multi-scale interest point detector and Adaptive
+Non-Maximal Suppression (ANMS) <span class="citation"
+data-cites="1467310"></span> to identify potential correspondences
+between images. We then formulate the likelihood that two images depict
+the same location as an Integer Linear Programming (ILP) problem and
+identify the best matches <span class="citation"
+data-cites="torresani2008feature"></span>. Finally, we output the
+geographical coordinates of the best-matched image in the database as
+the result. In this method, as long as the user has access to a local
+database, they can calculate the location of any photo within the
+database’s coverage without internet or GPS access.</p>
+<p>Our experiments show that finding matches by solving ILP can
+effectively find correct image matches, leading to an accuracy of 84.6%
+in the proposed method.</p>
+<figure id="matching">
+<img src="fig/overview.png" />
+<figcaption>Overview of GeoLens. The system utilizes a pre-collected
+image dataset with corresponding geographical coordinates. When a target
+image is provided, GeoLens predicts the geographical coordinates
+(latitude and longitude) of the location by comparing the target with
+the preprocessed dataset. </figcaption>
+</figure>
+<h1 id="problem-statement">Problem Statement</h1>
+<p>Given an area <span class="math inline"><em>A</em></span> and a
+target image <span class="math inline"><em>T</em></span> taken within
+this area, our system aims to output a location <span
+class="math inline">(<em>T</em><sub><em>l</em><em>o</em><em>n</em></sub>, <em>T</em><sub><em>l</em><em>a</em><em>t</em></sub>) ∈ <em>A</em></span>
+where <span class="math inline"><em>T</em></span> is taken.</p>
+<p>To achieve this, we first collect an image dataset <span
+class="math inline"><em>S</em></span> that contains all the street views
+in <span class="math inline"><em>A</em></span>. Each image <span
+class="math inline"><em>I</em> ∈ <em>S</em></span> has a label <span
+class="math inline">(<em>I</em><sub><em>l</em><em>o</em><em>n</em></sub>, <em>I</em><sub><em>l</em><em>a</em><em>t</em></sub>)</span>
+indicating the longitude and latitude of where the image is taken.
+Secondly, we compute a score <span
+class="math inline"><em>f</em><sub><em>T</em></sub>(<em>I</em>)</span>
+indicating how well <span class="math inline"><em>I</em></span> matches
+<span class="math inline"><em>T</em></span>. Finally, we see which image
+<span class="math inline"><em>I</em> ∈ <em>S</em></span> has the highest
+score and output its location <span
+class="math inline">(<em>I</em><sub><em>l</em><em>o</em><em>n</em></sub>, <em>I</em><sub><em>l</em><em>a</em><em>t</em></sub>)</span>
+as an estimation of where <span class="math inline"><em>T</em></span> is
+taken.</p>
+<h1 id="methodology">Methodology</h1>
+<figure id="fig:alg">
+<img src="fig/alg.png" style="width:100.0%" />
+<figcaption>The main process.</figcaption>
+</figure>
+<p>Our approach consists of two parts. First, given an area <span
+class="math inline"><em>A</em></span>, we need to collect all street
+views in <span class="math inline"><em>A</em></span> to form the
+dataset. Second, we need to compare each image in the dataset with the
+target image and compute their matching score. This section provides
+details of these two steps. A visualized pipeline of the algorithm can
+be found in Fig. <a href="#fig:alg" data-reference-type="ref"
+data-reference="fig:alg">2</a>.</p>
+<h2 id="data-collection">Data Collection</h2>
+<p>We used Google Street View to construct our dataset. Google Street
+View provides an API that we can download images by specifying latitude
+and longitude. Moreover, it includes images captured from different
+pitch angles and fields of view, which enables our dataset to
+comprehensively cover various photos, thereby enhancing the robustness
+of our model.</p>
+<p>We collected 2 datasets. The first one is along Telegraph Avenue, the
+400m segment from Bancroft Way to Dwight Way. The latitude ranges from
+[37.8652, 37.8687], and the longitude ranges from [, ]. We set a data
+point every 5 meters and downloaded 8 street views facing different
+directions (mostly east and west because buildings are located on these
+two sides) and with different fields of view. There are total of 608
+images in this dataset.</p>
+<p>The first dataset is along Channing Way, the 770m segment from
+Shattuck Avenue to Telegraph Avenue. The latitude ranges from [37.8658,
+37.8668], and the longitude ranges from [, ]. We set a data point every
+7 meters and downloaded 8 street views facing different directions
+(mostly north and south because buildings are located on these two
+sides) and with different fields of view. There are total of 832 images
+in this dataset.</p>
+<p>The target images in our experiments, are captured by mobile phone
+within the two areas mentioned above, focusing mainly on buildings. This
+shows that even when the target images originate from a different source
+than our dataset, our method remains effective.</p>
+<h2 id="image-matching-algorithm">Image Matching Algorithm</h2>
+<p>Essentially, this is an image matching problem, as our goal is to
+find how well two images <span class="math inline"><em>T</em></span> and
+<span class="math inline"><em>I</em></span> match. The first step is to
+compute the Harris scores of both images and detect their corners. <span
+class="citation" data-cites="Harris88alvey"></span> Here, we went beyond
+Project 4 and implemented a Gaussian pyramid to detect multiscaled
+corners to account for the scale-invariance of the two images. Then we
+use ANMS <span class="citation" data-cites="1467310"></span> to limit
+the number of corners.</p>
+<p>Next, for each detected corner <span
+class="math inline"><em>c</em><sub><em>T</em></sub></span> of <span
+class="math inline"><em>T</em></span>, we find two corners <span
+class="math inline"><em>c</em><sub><em>I</em>, 1</sub></span>, <span
+class="math inline"><em>c</em><sub><em>I</em>, 2</sub></span> of <span
+class="math inline"><em>I</em></span> such that they are corners with
+the closest and second closest distance to <span
+class="math inline"><em>c</em><sub><em>T</em></sub></span>. Here, the
+distance between two corners is defined as the L2 distance of their
+surrounding pixels convoluted with a Gaussian filter. We obtain a set
+<span class="math inline"><em>C</em></span> of 50 pairs of corresponding
+corners by <span
+class="math display"><em>C</em> = {(<em>c</em><sub><em>T</em></sub>, <em>c</em><sub><em>I</em>, 1</sub>)|<em>g</em>(<em>c</em><sub><em>T</em></sub>, <em>c</em><sub><em>I</em>, 1</sub>) ≤ <em>g</em><sub><em>t</em><em>h</em><em>r</em><em>e</em><em>s</em></sub>}</span>
+where <span class="math display">$$g(c_T, c_{I,1}) = \frac{dist(c_T,
+c_{I,1})}{dist(c_T, c_{I,2})}$$</span> and <span
+class="math inline"><em>g</em><sub><em>t</em><em>h</em><em>r</em><em>e</em><em>s</em></sub></span>
+is the 50th smallest value among all <span
+class="math inline"><em>g</em>(<em>c</em><sub><em>T</em></sub>, <em>c</em><sub><em>I</em>, 1</sub>)</span>.
+In other words, we match the corners in <span
+class="math inline"><em>T</em></span> and <span
+class="math inline"><em>I</em></span> according to their surrounding
+feature similarities, which is evaluated by distance to the nearest
+neighbor over distance to the second nearest neighbor (recall 1-NN/2-NN
+in lecture slides), and keep the 50 pairs with lowest scores. <span
+class="citation" data-cites="Lowe04"></span></p>
+<p>Suppose <span class="math inline"><em>T</em></span> and <span
+class="math inline"><em>I</em></span> both contain a specific building.
+Since they are taken at different positions from different angles, there
+is no homography correspondence between them. Therefore, we cannot
+directly use the RANSAC approach (as we did in Project 4) to map one
+image to another. However, observe that since street view photos are
+often (almost always) taken on the road or sidewalk, we can assume that
+the camera is surrounded by some flat surfaces (walls, ground, sky) and
+all 3D objects in the real world are just 2D objects on these surfaces.
+Therefore, we do not need to worry that the order of objects changes
+when viewing from different angles. (There are counter-examples though,
+such as trees planted on the sidewalk may come as left or right of other
+background objects when seen from different views.) In other words, a
+building always looks like the same building regardless of what
+perspective you look at it. If there is a window right above the door,
+the window appears right above the door in every single photo of the
+building. This implies that if some corners in <span
+class="math inline"><em>T</em></span> correspond to some corners in
+<span class="math inline"><em>I</em></span>, it is likely that these
+corners preserve their relative positions in both images. On the other
+hand, if <span class="math inline"><em>T</em></span> and <span
+class="math inline"><em>I</em></span> are different scenes, the
+positions of corresponding corners will be completely random.</p>
+<p>To formally state the idea of “preserve relative position”, consider
+three corresponding pairs <span
+class="math inline">(<em>A</em><sub>1</sub>, <em>B</em><sub>1</sub>), (<em>A</em><sub>2</sub>, <em>B</em><sub>2</sub>), (<em>A</em><sub>3</sub>, <em>B</em><sub>3</sub>) ∈ <em>C</em></span>.
+The following statements are equivalent:</p>
+<ul>
+<li><p><span
+class="math inline">{<em>A</em><sub>1</sub>, <em>A</em><sub>2</sub>, <em>A</em><sub>3</sub>}</span>
+and <span
+class="math inline">{<em>B</em><sub>1</sub>, <em>B</em><sub>2</sub>, <em>B</em><sub>3</sub>}</span>
+preserve relative position.</p></li>
+<li><p><span class="math inline"><em>A</em><sub>1</sub></span> falls on
+the left side of <span class="math inline">$\overline{A_2, A_3}$</span>
+iff. <span class="math inline"><em>B</em><sub>1</sub></span> falls on
+the left side of <span class="math inline">$\overline{B_2,
+B_3}$</span>.</p></li>
+<li><p>Traversing <span
+class="math inline"><em>A</em><sub>1</sub>, <em>A</em><sub>2</sub>, <em>A</em><sub>3</sub></span>
+in <span
+class="math inline">△<em>A</em><sub>1</sub><em>A</em><sub>2</sub><em>A</em><sub>3</sub></span>
+is a counterclockwise path iff. traversing <span
+class="math inline"><em>B</em><sub>1</sub>, <em>B</em><sub>2</sub>, <em>B</em><sub>3</sub></span>
+in <span
+class="math inline">△<em>B</em><sub>1</sub><em>B</em><sub>2</sub><em>B</em><sub>3</sub></span>
+is a counterclockwise path.</p></li>
+<li><p><span class="math inline">×</span><span
+class="math inline"> &gt; 0</span> iff. <span
+class="math inline">×</span><span
+class="math inline"> &gt; 0</span></p></li>
+</ul>
+<p>In our implementation, we compare the cross products as it is the
+easiest one to implement.</p>
+<p>Note that <span
+class="math inline">{<em>A</em><sub>1</sub>, <em>A</em><sub>2</sub>, <em>A</em><sub>3</sub>}</span>
+and <span
+class="math inline">{<em>B</em><sub>1</sub>, <em>B</em><sub>2</sub>, <em>B</em><sub>3</sub>}</span>
+preserve relative position does not guarantee anything. However, if
+<span
+class="math inline">{<em>A</em><sub>1</sub>, <em>A</em><sub>2</sub>, <em>A</em><sub>3</sub>}</span>
+and <span
+class="math inline">{<em>B</em><sub>1</sub>, <em>B</em><sub>2</sub>, <em>B</em><sub>3</sub>}</span>
+do not preserve relative position, we can learn a very important
+information that at least one of <span
+class="math inline">(<em>A</em><sub>1</sub>, <em>B</em><sub>1</sub>), (<em>A</em><sub>2</sub>, <em>B</em><sub>2</sub>), (<em>A</em><sub>3</sub>, <em>B</em><sub>3</sub>)</span>
+is an incorrect match.</p>
+<p>Now, we can apply the idea of RANSAC <span class="citation"
+data-cites="RANSAC"></span>, which is to find consensus among the
+matches. In particular, we want to find the maximum subset <span
+class="math inline"><em>σ</em></span> of <span
+class="math inline"><em>C</em></span> in which each correspondence pair
+agrees with each other. The subset <span
+class="math inline"><em>σ</em></span> can also be regarded as the
+“inliers”.</p>
+<p>Let the 50 elements of <span class="math inline"><em>C</em></span> be
+<span
+class="math inline">(<em>A</em><sub><em>i</em></sub>, <em>B</em><sub><em>i</em></sub>), 1 ≤ <em>i</em> ≤ 50</span>.
+Let <span
+class="math inline"><em>x</em><sub><em>i</em></sub> ∈ {0, 1}</span>
+indicates whether <span
+class="math inline">(<em>A</em><sub><em>i</em></sub>, <em>B</em><sub><em>i</em></sub>) ∈ <em>σ</em></span>.
+To maximize the number of inliers is to maximize <span
+class="math inline">$\sum_{i=1}^{50} x_i$</span>. On the other hand, if
+<span
+class="math inline">{<em>A</em><sub><em>i</em><sub>1</sub></sub>, <em>A</em><sub><em>i</em><sub>2</sub></sub>, <em>A</em><sub><em>i</em><sub>3</sub></sub>}</span>
+and <span
+class="math inline">{<em>B</em><sub><em>i</em><sub>1</sub></sub>, <em>B</em><sub><em>i</em><sub>2</sub></sub>, <em>B</em><sub><em>i</em><sub>3</sub></sub>}</span>
+do not preserve relative position, then <span
+class="math inline">(<em>A</em><sub><em>i</em><sub>1</sub></sub>, <em>B</em><sub><em>i</em><sub>1</sub></sub>), (<em>A</em><sub><em>i</em><sub>2</sub></sub>, <em>B</em><sub><em>i</em><sub>2</sub></sub>), (<em>A</em><sub><em>i</em><sub>3</sub></sub>, <em>B</em><sub><em>i</em><sub>3</sub></sub>)</span>
+cannot co-exist as inliers, so <span
+class="math inline"><em>x</em><sub><em>i</em><sub>1</sub></sub> + <em>x</em><sub><em>i</em><sub>2</sub></sub> + <em>x</em><sub><em>i</em><sub>3</sub></sub> ≤ 2</span>.
+We can formally state the maximization problem as <span
+class="math display">$$\begin{aligned}
+        \max_{x_i\in\{0,1\}} \quad &amp; \sum_{i=1}^{50}x_i\\
+        \textrm{s.t.} \quad &amp; x_{i_1}+x_{i_2}+x_{i_3}\leq 2 \textrm{
+if }
+\textrm{sign}\left(\textrm{\overrightharp{$A_{i_1}A_{i_2}$}}\times\textrm{\overrightharp{$A_{i_1}A_{i_3}$}}\right)\\
+        &amp;
+\neq\textrm{sign}\left(\textrm{\overrightharp{$B_{i_1}B_{i_2}$}}\times\textrm{\overrightharp{$B_{i_1}B_{i_3}$}}\right)
+    \end{aligned}$$</span></p>
+<p>This is simply an integer linear programming (ILP). Although it is
+well-known that ILP is an NP-complete problem, nowadays many modern
+solvers can yield satisfying solutions easily within a reasonable
+time.</p>
+<p>As we iterate through all <span
+class="math inline"><em>I</em> ∈ <em>S</em></span>, we find
+corresponding points between <span class="math inline"><em>I</em></span>
+and <span class="math inline"><em>T</em></span> and then solve the ILP.
+If <span class="math inline"><em>I</em></span> and <span
+class="math inline"><em>T</em></span> are different scenes, the
+positions of the corresponding points are completely random, and it is
+difficult to find a large set of inliers. Conversely, if <span
+class="math inline"><em>I</em></span> and <span
+class="math inline"><em>T</em></span> capture the same object, the
+corresponding points preserve relative positions in the two photos, and
+it is more likely to find a large set of inliers. Therefore, the ILP
+yields a high score only if <span class="math inline"><em>I</em></span>
+and <span class="math inline"><em>T</em></span> capture the same
+scene.</p>
+<p>Another property we can exploit is that a correct match <span
+class="math inline">(<em>A</em><sub><em>i</em></sub>, <em>B</em><sub><em>i</em></sub>)</span>
+usually has a low <span
+class="math inline"><em>g</em>(<em>A</em><sub><em>i</em></sub>, <em>B</em><sub><em>i</em></sub>)</span>
+score (where <span
+class="math inline"><em>g</em>(<em>A</em><sub><em>i</em></sub>, <em>B</em><sub><em>i</em></sub>)</span>
+is defined previously as 1-NN/2-NN) <span class="citation"
+data-cites="Lowe04"></span>. We can use this to evaluate whether the
+inliers we found are indeed correct matches. Simply modify the objective
+function <span class="math display">$$\max_{x_i\in\{0,1\}} \quad
+\sum_{i=1}^{50}x_i$$</span> into <span
+class="math display">$$\max_{x_i\in\{0,1\}} \quad
+\sum_{i=1}^{50}k_ix_i$$</span> where <span
+class="math display"><em>k</em><sub><em>i</em></sub> = 1 − <em>g</em>(<em>A</em><sub><em>i</em></sub>, <em>B</em><sub><em>i</em></sub>)</span>
+This new objective function favors the pair of points that are correct
+matches to be selected as inliers. If <span
+class="math inline"><em>I</em></span> and <span
+class="math inline"><em>T</em></span> are different scenes, it is very
+unlikely that the inliers we found have large <span
+class="math inline"><em>k</em><sub><em>i</em></sub></span> because their
+surrounding features wouldn’t match well. Again, the ILP yields a high
+score only if <span class="math inline"><em>I</em></span> and <span
+class="math inline"><em>T</em></span> capture the same scene.</p>
+<p>Recall that <span
+class="math inline"><em>f</em><sub><em>T</em></sub>(<em>I</em>)</span>
+is a function indicating how well <span
+class="math inline"><em>I</em></span> matches <span
+class="math inline"><em>T</em></span>. We can execute this procedure and
+define <span
+class="math inline"><em>f</em><sub><em>T</em></sub>(<em>I</em>)</span>
+as the maximum value of the objective function <span
+class="math inline">$\sum_{i=1}^{50}k_ix_i$</span>. After iterating
+through all <span class="math inline"><em>I</em> ∈ <em>S</em></span>, we
+can find which of them receives the highest score and output its
+location <span
+class="math inline">(<em>I</em><sub><em>l</em><em>o</em><em>n</em></sub>, <em>I</em><sub><em>l</em><em>a</em><em>t</em></sub>)</span>
+as an estimation of where <span class="math inline"><em>T</em></span> is
+taken.</p>
+<h1 id="results">Results</h1>
+<p>This section shows the results of our algorithm and discusses
+implementation issues from three perspectives.</p>
+<h2 id="comparing-two-images">Comparing Two Images</h2>
+<div class="figure*">
+<figure id="a">
+<img src="fig/2.jpg" style="height:2.22222in" />
+<figcaption>Target image.</figcaption>
+</figure>
+<figure id="b">
+<img src="fig/1.jpg" style="height:2.22222in" />
+<figcaption>Data image.</figcaption>
+</figure>
+<figure id="c">
+<img src="fig/4.jpg" style="height:2.22222in" />
+<figcaption>Target image.</figcaption>
+</figure>
+<figure id="d">
+<img src="fig/3.jpg" style="height:2.22222in" />
+<figcaption>Data image.</figcaption>
+</figure>
+</div>
+<p>To show that our algorithm and the ILP formulation indeed find
+correct correspondence between two images, we visualize the “inliers”
+found on original photos in Fig. <a href="#fig:result1"
+data-reference-type="ref"
+data-reference="fig:result1">[fig:result1]</a>. Fig. <a href="#a"
+data-reference-type="ref" data-reference="a">3</a> and <a href="#b"
+data-reference-type="ref" data-reference="b">4</a> show that the correct
+correspondence points are found when two images capture the same object
+from different perspectives. Fig. <a href="#c" data-reference-type="ref"
+data-reference="c">5</a> and <a href="#d" data-reference-type="ref"
+data-reference="d">6</a> show that when two images are different scenes,
+the correspondences found are a small set of completely random
+points.</p>
+<h2 id="comparing-target-image-with-the-dataset">Comparing Target Image
+with the Dataset</h2>
+<div class="figure*">
+<p><img src="fig/5.png" style="width:65.0%" alt="image" /></p>
+</div>
+<div class="figure*">
+<p><img src="fig/6.png" style="width:30.0%" alt="image" /></p>
+</div>
+<div class="figure*">
+<p><img src="fig/7.png" style="width:65.0%" alt="image" /></p>
+</div>
+<div class="figure*">
+<p><img src="fig/8.png" style="width:30.0%" alt="image" /></p>
+</div>
+<p>After comparing each <span
+class="math inline"><em>I</em> ∈ <em>S</em></span> with <span
+class="math inline"><em>T</em></span>, we consider the one with the
+highest score <span
+class="math inline"><em>f</em><sub><em>T</em></sub>(<em>I</em>)</span>
+as the correct answer. Fig. <a href="#fig:results2-1"
+data-reference-type="ref"
+data-reference="fig:results2-1">[fig:results2-1]</a> and <a
+href="#fig:results2-2" data-reference-type="ref"
+data-reference="fig:results2-2">[fig:results2-2]</a> show a typical
+distribution of <span
+class="math inline"><em>f</em><sub><em>T</em></sub>(<em>I</em>)</span>
+and the number of inliers found, respectively, and mark the right and
+wrong answers, where right answers are defined as the images that
+contain the same building that the target image captures. Right answers
+usually receive higher scores and have more inliers than wrong answers.
+Moreover, the image that receives the highest score is very likely to be
+correct. This provides a foundation for our final step – output the
+label of the image with the highest <span
+class="math inline"><em>f</em><sub><em>T</em></sub>(<em>I</em>)</span>.</p>
+<p>Fig. <a href="#fig:results2-3" data-reference-type="ref"
+data-reference="fig:results2-3">[fig:results2-3]</a> and <a
+href="#fig:results2-4" data-reference-type="ref"
+data-reference="fig:results2-4">[fig:results2-4]</a> show the score and
+number of inliers distribution of another target image. This time, the
+first place received a much higher score than the others.</p>
+<p>The execution time mainly depends on how much time we allow the ILP
+solver to run. We used the Gurobi solver <span class="citation"
+data-cites="gurobi"></span> and set a 0.5-second time limit (this is
+enough for the solver to find a solution near what it would find after
+half an hour). In this case, it takes about 2 seconds to compare the
+target image with an image from the dataset and find the <span
+class="math inline"><em>f</em><sub><em>T</em></sub>(<em>I</em>)</span>.
+Thus, for a dataset that consists of 800 photos, it takes about 30
+minutes to process.</p>
+<h2 id="overall-correctness">Overall Correctness</h2>
+<p>We tested 13 target images (taken by smartphone) on the Channing Way
+dataset. 11 of them output the correct location, achieving 84.6%
+correctness. One of the failure test cases is due to the target building
+being covered by scaffoldings in the images downloaded from Google
+Street View, but the scaffoldings do not exist anymore when we take the
+photo by ourselves. Although this situation reduces our overall
+correctness, this is the inherent weakness of comparing images from
+different sources.</p>
+<h1 id="conclusion">Conclusion</h1>
+<p>In this project, we proposed an algorithm that outputs where a given
+photo is taken by matching it with images in a dataset. The key idea is
+to formulate the matching problem of two images as an integer linear
+programming problem to find the inliers that preserve relative positions
+and have the highest similarity. Experimental results show that an
+overall correctness of 84.6% is achieved.</p>
